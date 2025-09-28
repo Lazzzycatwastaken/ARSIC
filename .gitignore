@@ -1,0 +1,45 @@
+# Exclude the converter application
+Converter
+Converter.cpp
+Makefile
+
+# Build artifacts
+*.o
+*.obj
+*.exe
+*.a
+*.lib
+
+# Build directories
+build/
+bin/
+obj/
+
+# IDE and editor files
+.vscode/
+.vs/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+
+# OS generated files
+.directory
+desktop.ini
+
+# Debug files
+*.dSYM/
+*.pdb
+
+# Test/example files (optional)
+test_images/
+examples/*/
+*.jpg
+*.png
+*.bmp
