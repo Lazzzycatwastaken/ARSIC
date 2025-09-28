@@ -3,8 +3,6 @@
 #include <vector>
 #include <cstdint>
 
-// Make stb_image.h functions available to C++
-// Forward declarations for stb_image functions we need
 extern "C" {
     typedef unsigned char stbi_uc;
     void stbi_image_free(void *retval_from_stbi_load);
