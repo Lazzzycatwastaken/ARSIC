@@ -38,6 +38,9 @@ struct Config {
     bool maintain_aspect = true;
     float contrast = 1.0f;
     float brightness = 0.0f;
+    float gamma = 2.2f;
+    float char_aspect_ratio = 0.43f;
+    bool use_gamma_correction = true;
 };
 
 class Interpreter {
@@ -59,6 +62,8 @@ private:
     float get_luminance(uint8_t r, uint8_t g, uint8_t b) const;
     char map_intensity_to_char(float intensity) const;
     Image resize_image(const Image& image, int new_width, int new_height) const;
+    float apply_gamma_correction(float value) const;
+    float apply_perceptual_mapping(float intensity) const;
 
     uint8_t get_pixel_value(const Image& image, int x, int y, int channel = 0) const;
 };

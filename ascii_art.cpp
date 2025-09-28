@@ -21,7 +21,7 @@ std::string Interpreter::convert(const Image& image) {
     int target_height = config_.target_height;
     
     if (config_.maintain_aspect && target_height == 0) {
-        target_height = static_cast<int>(target_width * image.height * 0.5f / image.width);
+        target_height = static_cast<int>(target_width * image.height * config_.char_aspect_ratio / image.width);
     }
     
     Image processed_image = resize_image(image, target_width, target_height);
@@ -46,7 +46,13 @@ std::string Interpreter::convert(const Image& image) {
                 luminance = get_pixel_value(processed_image, x, y, 0) / 255.0f;
             }
             
+            if (config_.use_gamma_correction) {
+                luminance = apply_gamma_correction(luminance);
+            }
+            
             luminance = std::clamp(luminance * config_.contrast + config_.brightness, 0.0f, 1.0f);
+            
+            luminance = apply_perceptual_mapping(luminance);
             
             result += map_intensity_to_char(luminance);
         }
@@ -109,17 +115,15 @@ void Interpreter::set_brightness(float brightness) {
 std::string Interpreter::get_charset() const {
     switch (config_.mode) {
         case Mode::CLEAN:
-            return " .-:=+*#%@";
+            return " .:-=+*#%@";
             
         case Mode::HIGH_FIDELITY:
-            return " .`'^\",:;Il!i~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
+            return " .'`^\",:;Il!i><~+_-?][}{1)(|\\tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
             
         case Mode::BLOCK:
             return " ░▒▓█";
-            
-
     }
-    return " .-:=+*#%@";
+    return " .:-=+*#%@";
 }
 
 float Interpreter::get_luminance(uint8_t r, uint8_t g, uint8_t b) const {
