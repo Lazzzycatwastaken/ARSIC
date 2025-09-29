@@ -1,14 +1,10 @@
-# Exclude the converter application
-Converter
-Converter.cpp
-Makefile
-
 # Build artifacts
 *.o
 *.obj
 *.exe
 *.a
 *.lib
+Converter
 
 # Build directories
 build/
