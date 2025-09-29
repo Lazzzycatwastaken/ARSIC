@@ -41,6 +41,7 @@ struct Config {
     float gamma = 2.2f;
     float char_aspect_ratio = 0.43f;
     bool use_gamma_correction = true;
+    bool use_color = false;
 };
 
 class Interpreter {
@@ -54,6 +55,7 @@ public:
     void set_target_size(int width, int height = 0);
     void set_contrast(float contrast);
     void set_brightness(float brightness);
+    void set_color(bool use_color);
     
 private:
     Config config_;
@@ -64,6 +66,7 @@ private:
     Image resize_image(const Image& image, int new_width, int new_height) const;
     float apply_gamma_correction(float value) const;
     float apply_perceptual_mapping(float intensity) const;
+    std::string get_color_escape_code(uint8_t r, uint8_t g, uint8_t b) const;
 
     uint8_t get_pixel_value(const Image& image, int x, int y, int channel = 0) const;
 };

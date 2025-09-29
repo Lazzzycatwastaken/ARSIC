@@ -32,29 +32,40 @@ std::string Interpreter::convert(const Image& image) {
     result.reserve((target_width + 1) * target_height);
     
     std::string charset = get_charset();
-    
+
     for (int y = 0; y < target_height; ++y) {
         for (int x = 0; x < target_width; ++x) {
             float luminance;
-            
+            uint8_t r = 0, g = 0, b = 0;
+
             if (processed_image.channels >= 3) {
-                uint8_t r = get_pixel_value(processed_image, x, y, 0);
-                uint8_t g = get_pixel_value(processed_image, x, y, 1);
-                uint8_t b = get_pixel_value(processed_image, x, y, 2);
+                r = get_pixel_value(processed_image, x, y, 0);
+                g = get_pixel_value(processed_image, x, y, 1);
+                b = get_pixel_value(processed_image, x, y, 2);
                 luminance = get_luminance(r, g, b);
             } else {
                 luminance = get_pixel_value(processed_image, x, y, 0) / 255.0f;
+                r = g = b = static_cast<uint8_t>(luminance * 255.0f);
             }
-            
+
             if (config_.use_gamma_correction) {
                 luminance = apply_gamma_correction(luminance);
             }
-            
+
             luminance = std::clamp(luminance * config_.contrast + config_.brightness, 0.0f, 1.0f);
-            
+
             luminance = apply_perceptual_mapping(luminance);
-            
-            result += map_intensity_to_char(luminance);
+
+            char ch = map_intensity_to_char(luminance);
+
+            if (config_.use_color) {
+                // Use 24-bit foreground color ANSI escape
+                result += get_color_escape_code(r, g, b);
+                result.push_back(ch);
+                result += "\x1b[0m"; // reset
+            } else {
+                result.push_back(ch);
+            }
         }
         result += '\n';
     }
@@ -110,6 +121,27 @@ void Interpreter::set_contrast(float contrast) {
 
 void Interpreter::set_brightness(float brightness) {
     config_.brightness = brightness;
+}
+
+void Interpreter::set_color(bool use_color) {
+    config_.use_color = use_color;
+}
+
+float Interpreter::apply_gamma_correction(float value) const {
+    if (value <= 0.0f) return 0.0f;
+    if (value >= 1.0f) return 1.0f;
+    return std::pow(value, 1.0f / config_.gamma);
+}
+
+float Interpreter::apply_perceptual_mapping(float intensity) const {
+    float x = intensity;
+    return std::clamp(3.0f * x * x - 2.0f * x * x * x, 0.0f, 1.0f);
+}
+
+std::string Interpreter::get_color_escape_code(uint8_t r, uint8_t g, uint8_t b) const {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "\x1b[38;2;%u;%u;%um", r, g, b);
+    return std::string(buf);
 }
 
 std::string Interpreter::get_charset() const {

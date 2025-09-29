@@ -43,3 +43,5 @@ examples/*/
 *.jpg
 *.png
 *.bmp
+.github/instructions/Instructions.instructions.md
+.gitignore
