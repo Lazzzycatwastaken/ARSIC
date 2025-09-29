@@ -60,9 +60,9 @@ public:
 private:
     Config config_;
     
-    std::string get_charset() const;
+    std::vector<std::string> get_charset() const;
     float get_luminance(uint8_t r, uint8_t g, uint8_t b) const;
-    char map_intensity_to_char(float intensity) const;
+    std::string map_intensity_to_char(float intensity) const;
     Image resize_image(const Image& image, int new_width, int new_height) const;
     float apply_gamma_correction(float value) const;
     float apply_perceptual_mapping(float intensity) const;

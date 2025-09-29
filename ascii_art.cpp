@@ -31,7 +31,7 @@ std::string Interpreter::convert(const Image& image) {
     std::string result;
     result.reserve((target_width + 1) * target_height);
     
-    std::string charset = get_charset();
+    std::vector<std::string> charset = get_charset();
 
     for (int y = 0; y < target_height; ++y) {
         for (int x = 0; x < target_width; ++x) {
@@ -56,15 +56,15 @@ std::string Interpreter::convert(const Image& image) {
 
             luminance = apply_perceptual_mapping(luminance);
 
-            char ch = map_intensity_to_char(luminance);
+            std::string ch = map_intensity_to_char(luminance);
 
             if (config_.use_color) {
                 // Use 24-bit foreground color ANSI escape
                 result += get_color_escape_code(r, g, b);
-                result.push_back(ch);
+                result += ch;
                 result += "\x1b[0m"; // reset
             } else {
-                result.push_back(ch);
+                result += ch;
             }
         }
         result += '\n';
@@ -144,28 +144,36 @@ std::string Interpreter::get_color_escape_code(uint8_t r, uint8_t g, uint8_t b) 
     return std::string(buf);
 }
 
-std::string Interpreter::get_charset() const {
+std::vector<std::string> Interpreter::get_charset() const {
     switch (config_.mode) {
         case Mode::CLEAN:
-            return " .:-=+*#%@";
-            
+            return {" ", ".", ":", "-", "=", "+", "*", "#", "%", "@"};
+
         case Mode::HIGH_FIDELITY:
-            return " .'`^\",:;Il!i><~+_-?][}{1)(|\\tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
-            
+            // A larger ramp broken into individual string entries (keep entries single-character)
+            // strings where possible so indexing remains intuitive (hopefully better compat because I'm getting garbage characters on some tests)
+            return {" ", "'", "`", "^", "\"", ",", ":", ";", "I", "l", "!", "i",
+                    ">", "<", "~", "+", "_", "-", "?", "]", "[", "}", "{", "1",
+                    ")", "(", "|", "\\", "t", "f", "j", "r", "x", "n", "u",
+                    "v", "c", "z", "X", "Y", "U", "J", "C", "L", "Q", "0",
+                    "O", "Z", "m", "w", "q", "p", "d", "b", "k", "h", "a",
+                    "o", "*", "#", "M", "W", "&", "8", "%", "B", "@", "$"};
+
         case Mode::BLOCK:
-            return " ░▒▓█";
+            // Use UTF-8 block characters; these are multi-byte but stored as std::string entries. (again garbage characters)
+            return {" ", "░", "▒", "▓", "█"};
     }
-    return " .:-=+*#%@";
+    return {" ", ".", ":", "-", "=", "+", "*", "#", "%", "@"};
 }
 
 float Interpreter::get_luminance(uint8_t r, uint8_t g, uint8_t b) const {
     return 0.299f * r / 255.0f + 0.587f * g / 255.0f + 0.114f * b / 255.0f;
 }
 
-char Interpreter::map_intensity_to_char(float intensity) const {
-    std::string charset = get_charset();
-    int index = static_cast<int>(intensity * (charset.length() - 1));
-    index = std::clamp(index, 0, static_cast<int>(charset.length() - 1));
+std::string Interpreter::map_intensity_to_char(float intensity) const {
+    std::vector<std::string> charset = get_charset();
+    int index = static_cast<int>(intensity * (charset.size() - 1));
+    index = std::clamp(index, 0, static_cast<int>(charset.size() - 1));
     return charset[index];
 }
 
