@@ -10,6 +10,12 @@
 #include <fstream>
 #include "stb_image.h"
 #include <csignal>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 static std::string to_lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
@@ -111,6 +117,27 @@ int main(int argc, char** argv) {
         std::cerr << "Unknown colors flag (use yes/no): " << argv[3] << "\n";
         return 3;
     }
+
+    // On Windows, try to enable virtual terminal processing (ANSI escapes).
+    // If we can't enable it, fall back to disabling color output to avoid raw escape sequences.
+#ifdef _WIN32
+    auto enable_windows_vt = []() -> bool {
+        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (hOut == INVALID_HANDLE_VALUE) return false;
+        DWORD mode = 0;
+        if (!GetConsoleMode(hOut, &mode)) return false;
+        // Enable ANSI escape sequences
+        mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        if (!SetConsoleMode(hOut, mode)) return false;
+        return true;
+    };
+    if (cfg.use_color) {
+        if (!enable_windows_vt()) {
+            std::cerr << "Warning: could not enable ANSI colors on this Windows console; disabling colored output.\n";
+            cfg.use_color = false;
+        }
+    }
+#endif
 
     ascii_art::Interpreter interp(cfg);
 
