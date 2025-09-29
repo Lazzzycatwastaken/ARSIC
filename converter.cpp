@@ -9,7 +9,7 @@
 #include <fstream>
 #include "stb_image.h"
 #include <csignal>
-//what
+
 static std::string to_lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
     return s;
