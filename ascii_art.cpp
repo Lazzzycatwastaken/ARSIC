@@ -27,17 +27,20 @@ std::string Interpreter::convert(const Image& image) {
     Image processed_image = resize_image(image, target_width, target_height);
     
     // Process image (im not doing dithering now because ughghhggg)
-    
+
     std::string result;
-    result.reserve((target_width + 1) * target_height);
-    
-    std::vector<std::string> charset = get_charset();
+    // Reserve an estimated capacity when colored escapes add bytes per character
+    result.reserve(static_cast<size_t>(target_height) * (target_width * (config_.use_color ? 8 : 1) + 1));
+
+    // cached charset may be accessed via map_intensity_to_char()
+    auto& color_cache = color_escape_cache_;
 
     for (int y = 0; y < target_height; ++y) {
-        for (int x = 0; x < target_width; ++x) {
-            float luminance;
+        int x = 0;
+        while (x < target_width) {
+            // compute properties of first pixel in run
             uint8_t r = 0, g = 0, b = 0;
-
+            float luminance;
             if (processed_image.channels >= 3) {
                 r = get_pixel_value(processed_image, x, y, 0);
                 g = get_pixel_value(processed_image, x, y, 1);
@@ -47,29 +50,59 @@ std::string Interpreter::convert(const Image& image) {
                 luminance = get_pixel_value(processed_image, x, y, 0) / 255.0f;
                 r = g = b = static_cast<uint8_t>(luminance * 255.0f);
             }
-
-            if (config_.use_gamma_correction) {
-                luminance = apply_gamma_correction(luminance);
-            }
-
+            if (config_.use_gamma_correction) luminance = apply_gamma_correction(luminance);
             luminance = std::clamp(luminance * config_.contrast + config_.brightness, 0.0f, 1.0f);
-
             luminance = apply_perceptual_mapping(luminance);
 
-            std::string ch = map_intensity_to_char(luminance);
+            const std::string& ch = map_intensity_to_char(luminance);
+
+            // extend run while glyph and color match (this is ripped lol)
+            int run_start = x;
+            ++x;
+            while (x < target_width) {
+                uint8_t nr = 0, ng = 0, nb = 0;
+                float nl;
+                if (processed_image.channels >= 3) {
+                    nr = get_pixel_value(processed_image, x, y, 0);
+                    ng = get_pixel_value(processed_image, x, y, 1);
+                    nb = get_pixel_value(processed_image, x, y, 2);
+                    nl = get_luminance(nr, ng, nb);
+                } else {
+                    nl = get_pixel_value(processed_image, x, y, 0) / 255.0f;
+                    nr = ng = nb = static_cast<uint8_t>(nl * 255.0f);
+                }
+                if (config_.use_gamma_correction) nl = apply_gamma_correction(nl);
+                nl = std::clamp(nl * config_.contrast + config_.brightness, 0.0f, 1.0f);
+                nl = apply_perceptual_mapping(nl);
+                const std::string& nch = map_intensity_to_char(nl);
+                if (config_.use_color) {
+                    if (nr != r || ng != g || nb != b || nch != ch) break;
+                } else {
+                    if (nch != ch) break;
+                }
+                ++x;
+            }
+
+            int run_len = x - run_start;
 
             if (config_.use_color) {
-                // Use 24-bit foreground color ANSI escape
-                result += get_color_escape_code(r, g, b);
-                result += ch;
-                result += "\x1b[0m"; // reset
+                uint32_t key = (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
+                auto it = color_cache.find(key);
+                if (it == color_cache.end()) {
+                    char buf[32];
+                    std::snprintf(buf, sizeof(buf), "\x1b[38;2;%u;%u;%um", r, g, b);
+                    it = color_cache.emplace(key, std::string(buf)).first;
+                }
+                result += it->second;
+                for (int i = 0; i < run_len; ++i) result += ch;
+                result += "\x1b[0m";
             } else {
-                result += ch;
+                for (int i = 0; i < run_len; ++i) result += ch;
             }
         }
         result += '\n';
     }
-    
+
     return result;
 }
 
@@ -139,39 +172,38 @@ float Interpreter::apply_perceptual_mapping(float intensity) const {
 }
 
 std::string Interpreter::get_color_escape_code(uint8_t r, uint8_t g, uint8_t b) const {
+    uint32_t key = (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
+    auto it = color_escape_cache_.find(key);
+    if (it != color_escape_cache_.end()) return it->second;
     char buf[32];
     std::snprintf(buf, sizeof(buf), "\x1b[38;2;%u;%u;%um", r, g, b);
-    return std::string(buf);
+    auto em = color_escape_cache_.emplace(key, std::string(buf));
+    return em.first->second;
 }
 
-std::vector<std::string> Interpreter::get_charset() const {
-    switch (config_.mode) {
-        case Mode::CLEAN:
-            return {" ", ".", ":", "-", "=", "+", "*", "#", "%", "@"};
-
-        case Mode::HIGH_FIDELITY:
-            // A larger ramp broken into individual string entries (keep entries single-character)
-            // strings where possible so indexing remains intuitive (hopefully better compat because I'm getting garbage characters on some tests)
-            return {" ", "'", "`", "^", "\"", ",", ":", ";", "I", "l", "!", "i",
+const std::vector<std::string>& Interpreter::get_charset() const {
+    static const std::vector<std::string> clean = {" ", ".", ":", "-", "=", "+", "*", "#", "%", "@"};
+    static const std::vector<std::string> high = {" ", "'", "`", "^", "\"", ",", ":", ";", "I", "l", "!", "i",
                     ">", "<", "~", "+", "_", "-", "?", "]", "[", "}", "{", "1",
                     ")", "(", "|", "\\", "t", "f", "j", "r", "x", "n", "u",
                     "v", "c", "z", "X", "Y", "U", "J", "C", "L", "Q", "0",
                     "O", "Z", "m", "w", "q", "p", "d", "b", "k", "h", "a",
                     "o", "*", "#", "M", "W", "&", "8", "%", "B", "@", "$"};
-
-        case Mode::BLOCK:
-            // Use UTF-8 block characters; these are multi-byte but stored as std::string entries. (again garbage characters)
-            return {" ", "░", "▒", "▓", "█"};
+    static const std::vector<std::string> block = {" ", "░", "▒", "▓", "█"};
+    switch (config_.mode) {
+        case Mode::CLEAN: return clean;
+        case Mode::HIGH_FIDELITY: return high;
+        case Mode::BLOCK: return block;
     }
-    return {" ", ".", ":", "-", "=", "+", "*", "#", "%", "@"};
+    return clean;
 }
 
 float Interpreter::get_luminance(uint8_t r, uint8_t g, uint8_t b) const {
     return 0.299f * r / 255.0f + 0.587f * g / 255.0f + 0.114f * b / 255.0f;
 }
 
-std::string Interpreter::map_intensity_to_char(float intensity) const {
-    std::vector<std::string> charset = get_charset();
+const std::string& Interpreter::map_intensity_to_char(float intensity) const {
+    const auto& charset = get_charset();
     int index = static_cast<int>(intensity * (charset.size() - 1));
     index = std::clamp(index, 0, static_cast<int>(charset.size() - 1));
     return charset[index];

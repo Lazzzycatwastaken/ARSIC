@@ -2,6 +2,8 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <unordered_map>
+#include <string_view>
 
 extern "C" {
     typedef unsigned char stbi_uc;
@@ -60,13 +62,16 @@ public:
 private:
     Config config_;
     
-    std::vector<std::string> get_charset() const;
+    const std::vector<std::string>& get_charset() const;
     float get_luminance(uint8_t r, uint8_t g, uint8_t b) const;
-    std::string map_intensity_to_char(float intensity) const;
+    const std::string& map_intensity_to_char(float intensity) const;
     Image resize_image(const Image& image, int new_width, int new_height) const;
     float apply_gamma_correction(float value) const;
     float apply_perceptual_mapping(float intensity) const;
     std::string get_color_escape_code(uint8_t r, uint8_t g, uint8_t b) const;
+
+    // cache for color escape sequences (key = 0xRRGGBB)
+    mutable std::unordered_map<uint32_t, std::string> color_escape_cache_;
 
     uint8_t get_pixel_value(const Image& image, int x, int y, int channel = 0) const;
 };

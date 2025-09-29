@@ -2,6 +2,7 @@
 #include <iostream>
 #include <string>
 #include <algorithm>
+#include <iomanip>
 #include <vector>
 #include <thread>
 #include <chrono>
@@ -31,6 +32,7 @@ int main(int argc, char** argv) {
     bool animate = false;
     double speed = 1.0;
     int min_delay_override = -1;
+    bool show_fps = false;
     //any extra positional args (after the first 3) can be width or animate flag in any order.
     for (int i = 4; i < argc; ++i) {
         std::string s = to_lower(argv[i]);
@@ -62,6 +64,15 @@ int main(int argc, char** argv) {
         }
         if (s == "--speed" && i+1 < argc) {
             try { speed = std::stod(argv[++i]); } catch(...) {}
+            continue;
+        }
+        // show fps flag
+        if (s == "--show-fps" || s == "--fps") {
+            show_fps = true;
+            continue;
+        }
+        if (s == "--no-fps") {
+            show_fps = false;
             continue;
         }
         // allow --min-delay-ms=NN or min-delay-ms=NN
@@ -141,8 +152,7 @@ int main(int argc, char** argv) {
         auto handle_sigint = [](int){ g_stop = 1; };
         std::signal(SIGINT, handle_sigint);
 
-        const int kDefaultDelayCs = 100;
-        const int kDefaultDelayMs = kDefaultDelayCs * 10;
+    const int kDefaultDelayCs = 100;
         const int kMinDelayMs = 20; // allow up to ~50 FPS if GIF requests it but avoid 0ms
     int kMinDelayMsEffective = kMinDelayMs;
     if (min_delay_override > 0) kMinDelayMsEffective = min_delay_override;
@@ -150,8 +160,11 @@ int main(int argc, char** argv) {
         // next_frame_time is the instant when the next displayed frame SHOULD occur
         auto next_frame_time = std::chrono::steady_clock::now();
 
-        // playback loop so iterate frames repeatedly until SIGINT
-        int f = 0;
+    // playback loop so iterate frames repeatedly until SIGINT
+    int f = 0;
+    std::chrono::steady_clock::time_point last_display_time;
+    double fps_ema = 0.0;
+    const double fps_alpha = 0.15;
         while (!g_stop) {
             unsigned char* src = gif_data + (size_t)f * frame_bytes;
             ascii_art::Image image(w, h, 3);
@@ -163,6 +176,26 @@ int main(int argc, char** argv) {
             // move cursor home and print frame
             std::cout << "\x1b[H";
             std::cout << out << std::flush;
+
+            std::cout << "\x1b[0m" << std::flush;
+            if (show_fps) {
+                auto display_time = std::chrono::steady_clock::now();
+                if (last_display_time.time_since_epoch().count() != 0) {
+                    double delta_ms = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(display_time - last_display_time).count();
+                    if (delta_ms > 0.0) {
+                        double inst_fps = 1000.0 / delta_ms;
+                        if (fps_ema == 0.0) fps_ema = inst_fps;
+                        else fps_ema = fps_ema * (1.0 - fps_alpha) + inst_fps * fps_alpha;
+                    }
+                }
+                last_display_time = display_time;
+
+                if (fps_ema > 0.0) {
+                    std::cout << std::fixed << std::setprecision(1) << "FPS: " << fps_ema << "\n" << std::flush;
+                } else {
+                    std::cout << "FPS: -\n" << std::flush;
+                }
+            }
 
             // Determine this frame's delay (in ms). GIF delays are in centiseconds (w trivia?)
             int delay_cs = kDefaultDelayCs;
