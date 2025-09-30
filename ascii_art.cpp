@@ -100,7 +100,11 @@ std::string Interpreter::convert(const Image& image) {
                 for (int i = 0; i < run_len; ++i) result += ch;
             }
         }
-        result += '\n';
+#if defined(_WIN32) || defined(_WIN64)
+    result += "\r\n";
+#else
+    result += '\n';
+#endif
     }
 
     return result;
@@ -183,6 +187,13 @@ std::string Interpreter::get_color_escape_code(uint8_t r, uint8_t g, uint8_t b) 
 
 const std::vector<std::string>& Interpreter::get_charset() const {
     static const std::vector<std::string> clean = {" ", ".", ":", "-", "=", "+", "*", "#", "%", "@"};
+#if defined(_WIN32) || defined(_WIN64)
+    static const std::vector<std::string> high = {" ", ".", "'", ":", ",", ";", "I", "l", "!",
+                    ">", "<", "+", "-", "~", "*", "#", "M", "W", "@"};
+    // Use a denser ASCII fallback for block mode so the image remains solid.
+    static const std::vector<std::string> block = {" ", ".", ":", "=", "#"};
+    static const std::vector<std::string> block_unicode = {" ", "░", "▒", "▓", "█"};
+#else
     static const std::vector<std::string> high = {" ", "'", "`", "^", "\"", ",", ":", ";", "I", "l", "!", "i",
                     ">", "<", "~", "+", "_", "-", "?", "]", "[", "}", "{", "1",
                     ")", "(", "|", "\\", "t", "f", "j", "r", "x", "n", "u",
@@ -190,10 +201,17 @@ const std::vector<std::string>& Interpreter::get_charset() const {
                     "O", "Z", "m", "w", "q", "p", "d", "b", "k", "h", "a",
                     "o", "*", "#", "M", "W", "&", "8", "%", "B", "@", "$"};
     static const std::vector<std::string> block = {" ", "░", "▒", "▓", "█"};
+#endif
     switch (config_.mode) {
         case Mode::CLEAN: return clean;
         case Mode::HIGH_FIDELITY: return high;
-        case Mode::BLOCK: return block;
+    case Mode::BLOCK:
+#if defined(_WIN32) || defined(_WIN64)
+        if (config_.force_unicode) return block_unicode;
+        return block;
+#else
+        return block;
+#endif
     }
     return clean;
 }

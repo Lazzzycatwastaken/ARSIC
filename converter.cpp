@@ -9,6 +9,22 @@
 #include <fstream>
 #include "stb_image.h"
 #include <csignal>
+#include <cstdlib>
+// POSIX terminal sizing/read checks
+#if !defined(_WIN32) && !defined(_WIN64)
+#include <unistd.h>
+#include <sys/ioctl.h>
+#endif
+
+#if defined(_WIN32) || defined(_WIN64)
+// What the actual FUCK microsoft?? why does this break the std::min/max? without this
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#endif
 
 static std::string to_lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
@@ -16,6 +32,27 @@ static std::string to_lower(std::string s) {
 }
 
 int main(int argc, char** argv) {
+#if defined(_WIN32) || defined(_WIN64)
+    _setmode(_fileno(stdout), _O_BINARY);
+    // Try to set console code page to UTF-8
+    SetConsoleOutputCP(CP_UTF8);
+
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    bool vt_enabled = false;
+    if (hOut != INVALID_HANDLE_VALUE) {
+        DWORD dwMode = 0;
+        if (GetConsoleMode(hOut, &dwMode)) {
+            DWORD desired = dwMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN;
+            if (SetConsoleMode(hOut, desired)) {
+                // verify the flag is set
+                DWORD newMode = 0;
+                if (GetConsoleMode(hOut, &newMode)) {
+                    vt_enabled = (newMode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+                }
+            }
+        }
+    }
+#endif
     if (argc < 4) {
         std::cerr << "Usage: " << argv[0] << " IMAGE STYLE COLORS [WIDTH] [ANIMATE]\n";
         std::cerr << "  STYLE: clean | high_fidelity | block\n";
@@ -24,6 +61,39 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // cross-platform console write helper (lots of Windows bullshit to get Unicode working properly)
+#if defined(_WIN32) || defined(_WIN64)
+    auto write_to_console = [&](const std::string &s, bool flush)->void {
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (h == INVALID_HANDLE_VALUE) {
+            fwrite(s.data(), 1, s.size(), stdout);
+            if (flush) fflush(stdout);
+            return;
+        }
+        if (GetFileType(h) != FILE_TYPE_CHAR) {
+            fwrite(s.data(), 1, s.size(), stdout);
+            if (flush) fflush(stdout);
+            return;
+        }
+        int wide_len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), NULL, 0);
+        if (wide_len <= 0) {
+            fwrite(s.data(), 1, s.size(), stdout);
+            if (flush) fflush(stdout);
+            return;
+        }
+        std::vector<wchar_t> wbuf(wide_len);
+        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), wbuf.data(), wide_len);
+        DWORD written = 0;
+        WriteConsoleW(h, wbuf.data(), wide_len, &written, NULL);
+        if (flush) fflush(stdout);
+    };
+#else
+    auto write_to_console = [&](const std::string &s, bool flush)->void {
+        fwrite(s.data(), 1, s.size(), stdout);
+        if (flush) fflush(stdout);
+    };
+#endif
+
     std::string image_path = argv[1];
     std::string style_str = to_lower(argv[2]);
     std::string colors_str = to_lower(argv[3]);
@@ -31,6 +101,8 @@ int main(int argc, char** argv) {
     bool animate = false;
     double speed = 1.0;
     int min_delay_override = -1;
+    double char_aspect_override = 0.0;
+    bool force_unicode = false;
     //any extra positional args (after the first 3) can be width or animate flag in any order.
     for (int i = 4; i < argc; ++i) {
         std::string s = to_lower(argv[i]);
@@ -76,10 +148,68 @@ int main(int argc, char** argv) {
             try { min_delay_override = std::stoi(argv[++i]); } catch(...) {}
             continue;
         }
+        if (s.rfind("--char-aspect=", 0) == 0 || s.rfind("char-aspect=", 0) == 0) {
+            auto eq = s.find('=');
+            if (eq != std::string::npos) {
+                try { char_aspect_override = std::stod(s.substr(eq+1)); } catch(...) {}
+            }
+            continue;
+        }
+        if (s == "--force-unicode" || s == "--unicode") {
+            force_unicode = true;
+            continue;
+        }
     }
 
     ascii_art::Config cfg;
     cfg.target_width = width;
+    if (char_aspect_override > 0.0) cfg.char_aspect_ratio = static_cast<float>(char_aspect_override);
+    else {
+#if defined(_WIN32) || defined(_WIN64)
+    cfg.char_aspect_ratio = 0.5f; // taller characters
+#else
+    cfg.char_aspect_ratio = 0.43f; // original default
+#endif
+    }
+    cfg.force_unicode = force_unicode;
+
+    // If user didn't explicitly request Unicode blocks, auto-enable them when
+    // running inside Windows Terminal (WT_SESSION) which supports these glyphs.
+#if defined(_WIN32) || defined(_WIN64)
+    if (!cfg.force_unicode) {
+        const char* wt = std::getenv("WT_SESSION");
+        if (wt) {
+            cfg.force_unicode = true;
+        }
+    }
+#endif
+
+    // If stdout is a terminal, clamp target width to the terminal's column width
+    // to avoid automatic wrapping which makes the ASCII art slide apart.
+#if defined(_WIN32) || defined(_WIN64)
+    if (GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) == FILE_TYPE_CHAR) {
+        CONSOLE_SCREEN_BUFFER_INFO csbi;
+        if (GetConsoleScreenBufferInfo(hOut, &csbi)) {
+            int cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+            if (cols > 0 && cfg.target_width > cols) {
+                std::cerr << "Warning: target width " << cfg.target_width << " exceeds terminal width " << cols << ", clamping to fit.\n";
+                cfg.target_width = cols;
+            }
+        }
+    }
+#else
+    // get window size
+    if (isatty(fileno(stdout))) {
+        struct winsize ws;
+        if (ioctl(fileno(stdout), TIOCGWINSZ, &ws) == 0) {
+            int cols = ws.ws_col;
+            if (cols > 0 && cfg.target_width > cols) {
+                std::cerr << "Warning: target width " << cfg.target_width << " exceeds terminal width " << cols << ", clamping to fit.\n";
+                cfg.target_width = cols;
+            }
+        }
+    }
+#endif
 
     if (style_str == "clean" || style_str == "c") {
         cfg.mode = ascii_art::Mode::CLEAN;
@@ -100,6 +230,15 @@ int main(int argc, char** argv) {
         std::cerr << "Unknown colors flag (use yes/no): " << argv[3] << "\n";
         return 3;
     }
+
+    // If VT processing could not be enabled on Windows, disable color to avoid
+    // printing raw ANSI escape sequences which can break line wrapping and layout.
+#if defined(_WIN32) || defined(_WIN64)
+    if (cfg.use_color && !vt_enabled) {
+        std::cerr << "Warning: terminal does not support ANSI VT sequences reliably; disabling color to preserve layout.\n";
+        cfg.use_color = false;
+    }
+#endif
 
     ascii_art::Interpreter interp(cfg);
 
@@ -130,9 +269,9 @@ int main(int argc, char** argv) {
             return 5;
         }
 
-        // clear
-        std::cout << "\x1b[2J";
-        std::cout << "\x1b[?25l";
+    // clear
+    write_to_console("\x1b[2J", false);
+    write_to_console("\x1b[?25l", false);
 
         const int frame_bytes = w * h * 3;
 
@@ -161,8 +300,8 @@ int main(int argc, char** argv) {
             std::string out = interp.convert(image);
 
             // move cursor home and print frame
-            std::cout << "\x1b[H";
-            std::cout << out << std::flush;
+            write_to_console("\x1b[H", false);
+            write_to_console(out, true);
 
             // Determine this frame's delay (in ms). GIF delays are in centiseconds (w trivia?)
             int delay_cs = kDefaultDelayCs;
@@ -213,8 +352,8 @@ int main(int argc, char** argv) {
             if (f >= frames) f = 0;
         }
 
-        // cleanup
-        std::cout << "\x1b[?25h";
+    // cleanup
+    write_to_console("\x1b[?25h", true);
         stbi_image_free(gif_data);
         if (delays) free(delays);
 
@@ -222,8 +361,8 @@ int main(int argc, char** argv) {
     }
 
     try {
-        std::string out = interp.convert_from_file(image_path);
-        std::cout << out;
+    std::string out = interp.convert_from_file(image_path);
+    write_to_console(out, true);
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << '\n';
         return 4;

@@ -44,6 +44,8 @@ struct Config {
     float char_aspect_ratio = 0.43f;
     bool use_gamma_correction = true;
     bool use_color = false;
+    // If true, prefer Unicode even on Windows consoles
+    bool force_unicode = false;
 };
 
 class Interpreter {
